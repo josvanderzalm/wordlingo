@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wordlingo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 400px;
+            margin: auto;
+        }
+
+        input,
+        button {
+            display: block;
+            margin-top: 10px;
+            width: 100%;
+        }
+
+        #quiz-section,
+        #word-list,
+        #add-section,
+        #feedback-section {
+            margin-top: 20px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            border: 1px solid black;
+            padding: 5px;
+            text-align: left;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Worldlingo</h1>
+    <h2>Translation Practice</h2>
+
+    <a href="#" onclick="setMode('practice')">Practice Mode</a> |
+    <a href="#" onclick="setMode('edit')">Edit Mode</a> |
+    <a href="#" onclick="setMode('feedback')">Feedback</a>
+
+    <div id="add-section" class="hidden">
+        <h3>Add a Word</h3>
+        <input type="text" autocomplete="off" id="word" placeholder="Word">
+        <input type="text" autocomplete="off" id="translation" placeholder="Translation">
+        <button onclick="addWord()">Add</button>
+    </div>
+
+    <div id="word-list" class="hidden">
+        <h3>Word List</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Word</th>
+                    <th>Translation</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="word-table-body"></tbody>
+        </table>
+        <button onclick="exportData()">Export</button>
+        <input type="file" id="import-file" onchange="importData(event)">
+    </div>
+
+    <div id="quiz-section" class="hidden">
+        <h3>Practice</h3>
+        <p id="question"></p>
+        <p id="feedback-message" style="color: red;"></p>
+        <input type="text" id="answer" autocomplete="off" placeholder="Your translation">
+        <button onclick="checkAnswer()">Check</button>
+        <p id="feedback"></p>
+    </div>
+
+    <div id="feedback-section" class="hidden">
+        <h3>Feedback</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Word</th>
+                    <th>Translation</th>
+                    <th>Correct</th>
+                    <th>Incorrect</th>
+                </tr>
+            </thead>
+            <tbody id="feedback-table-body"></tbody>
+        </table>
+        <button onclick="resetScores()">Reset Scores</button>
+    </div>
+
+    <script>
+        let words = JSON.parse(localStorage.getItem('words')) || [];
+        let currentWord = null;
+        let incorrectCount = 0;
+
+        function setMode(mode) {
+            document.getElementById('add-section').classList.toggle('hidden', mode !== 'edit');
+            document.getElementById('word-list').classList.toggle('hidden', mode !== 'edit');
+            document.getElementById('quiz-section').classList.toggle('hidden', mode !== 'practice');
+            document.getElementById('feedback-section').classList.toggle('hidden', mode !== 'feedback');
+
+            const correctCols = document.querySelectorAll('.correct-col');
+            const incorrectCols = document.querySelectorAll('.incorrect-col');
+
+            correctCols.forEach(col => col.style.display = mode === 'edit' ? 'none' : 'table-cell');
+            incorrectCols.forEach(col => col.style.display = mode === 'edit' ? 'none' : 'table-cell');
+
+            if (mode === 'practice') {
+                nextWord();
+            }
+            if (mode === 'feedback') {
+                updateFeedback();
+            }
+            if (mode === 'edit') {
+                updateWordList();
+            }
+        }
+
+        function updateFeedback() {
+            const tableBody = document.getElementById('feedback-table-body');
+            tableBody.innerHTML = '';
+
+            if (words.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="4">No words available</td></tr>';
+                return;
+            }
+
+            words.forEach(entry => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${entry.word}</td>
+                    <td>${entry.translation}</td>
+                    <td>${entry.correct ?? 0}</td>
+                    <td>${entry.incorrect ?? 0}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+
+
+        function nextWord() {
+            if (words.length === 0) return;
+
+            // Increase the weight of words with more incorrect attempts
+            let weightedWords = [];
+            words.forEach(word => {
+                const weight = Math.max(1, word.incorrect - word.correct + 1); // Prioritize wrong words
+                for (let i = 0; i < weight; i++) {
+                    weightedWords.push(word);
+                }
+            });
+
+            // 80% chance to pick from weighted words, 20% chance to mix in a random word
+            let useWeighted = Math.random() < 0.8;
+            if (useWeighted) {
+                currentWord = weightedWords[Math.floor(Math.random() * weightedWords.length)];
+            } else {
+                currentWord = words[Math.floor(Math.random() * words.length)];
+            }
+
+            incorrectCount = 0;
+            document.getElementById('question').innerText = currentWord.word;
+            document.getElementById('answer').value = '';
+            document.getElementById('answer').focus();
+
+            document.getElementById('feedback-message').textContent = '';
+
+        }
+
+        function checkAnswer() {
+            const answerInput = document.getElementById('answer');
+            const feedbackMessage = document.getElementById('feedback-message');
+
+            if (!currentWord) {
+                feedbackMessage.textContent = "No words available!";
+                feedbackMessage.style.color = "red";
+                return;
+            }
+
+            const answer = answerInput.value.trim(); // Keep original case
+            const correctAnswer = currentWord.translation.trim(); // Keep original case
+
+            if (answer === correctAnswer) { // Direct comparison without lowercase conversion
+                currentWord.correct++;
+                feedbackMessage.textContent = "✅ Correct! 🎉";
+                feedbackMessage.style.color = "green";
+
+                setTimeout(() => {
+                    nextWord();
+                }, 1000);
+            } else {
+                incorrectCount++;
+
+                if (incorrectCount >= 3) {
+                    feedbackMessage.textContent = `❌ Correct answer: ${currentWord.translation}`;
+                    feedbackMessage.style.color = "red";
+                    currentWord.incorrect++;
+
+                    setTimeout(() => {
+                        nextWord();
+                    }, 2000);
+                } else {
+                    feedbackMessage.textContent = `❌ Incorrect. Try again! (${incorrectCount}/3)`;
+                    feedbackMessage.style.color = "red";
+                }
+            }
+
+            answerInput.value = ''; // Clear input field
+            answerInput.focus(); // Keep focus on input field
+            localStorage.setItem('words', JSON.stringify(words)); // Save progress
+        }
+
+        function addWord() {
+            const wordInput = document.getElementById('word');
+            const translationInput = document.getElementById('translation');
+            const word = wordInput.value.trim();
+            const translation = translationInput.value.trim();
+
+            if (!word || !translation) {
+                alert("Please enter both a word and a translation.");
+                return;
+            }
+
+            words.push({ word, translation, correct: 0, incorrect: 0 });
+            localStorage.setItem('words', JSON.stringify(words));
+
+            // Clear the input fields after submission
+            wordInput.value = '';
+            translationInput.value = '';
+            wordInput.focus();
+
+            updateWordList();
+        }
+
+        document.getElementById('translation').addEventListener('keydown', function (event) {
+            if (event.key === "Enter") {
+                event.preventDefault(); // Prevent accidental form submission (if inside a form)
+                addWord();
+            }
+        });
+
+        document.getElementById('answer').addEventListener('keydown', function (event) {
+            if (event.key === "Enter") {
+                event.preventDefault(); // Prevent accidental form submission
+                checkAnswer();
+            }
+        });
+
+        function updateWordList() {
+            const tableBody = document.getElementById('word-table-body');
+            tableBody.innerHTML = '';
+            words.forEach((entry, index) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td><input type="text" autocomplete="off" value="${entry.word}" onchange="editWord(${index}, 'word', this.value)"></td>
+                    <td><input type="text" autocomplete="off" value="${entry.translation}" onchange="editWord(${index}, 'translation', this.value)"></td>
+                    <td><button onclick="deleteWord(${index})">Delete</button></td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+
+        function deleteWord(index) {
+            words.splice(index, 1);
+            localStorage.setItem('words', JSON.stringify(words));
+            updateWordList();
+        }
+
+        function exportData() {
+            const blob = new Blob([JSON.stringify(words)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'translations.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        function importData(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                words = JSON.parse(e.target.result);
+                localStorage.setItem('words', JSON.stringify(words));
+                updateWordList();
+            };
+            reader.readAsText(file);
+        }
+
+        function resetScores() {
+            words.forEach(entry => {
+                entry.correct = 0;
+                entry.incorrect = 0;
+            });
+
+            localStorage.setItem('words', JSON.stringify(words));
+            updateFeedback(); // Refresh the feedback table
+        }
+
+        updateWordList();
+
+        document.addEventListener("DOMContentLoaded", () => {
+            setMode('practice');
+        });
+    </script>
+</body>
+
+</html>
