@@ -22,7 +22,8 @@
         #quiz-section,
         #word-list,
         #add-section,
-        #feedback-section {
+        #feedback-section,
+        #global-settings {
             margin-top: 20px;
         }
 
@@ -49,13 +50,22 @@
     <h2>Translation Practice</h2>
 
     <a href="#" onclick="setMode('practice')">Practice Mode</a> |
-    <a href="#" onclick="setMode('edit')">Edit Mode</a> |
-    <a href="#" onclick="setMode('feedback')">Feedback</a>
+    <a href="#" onclick="setMode('feedback')">Feedback</a> |
+    <a href="#" onclick="setMode('edit')">Edit Mode</a>
+
+    <div id="global-settings" class="hidden">
+        <h3>The name of the exercise</h3>
+        <input type="text" autocomplete="off" id="global-exercise-name" placeholder="The name of the exercise" value="translation" oninput="updateGlobalSettings()">
+        <h3>Vertaling</h3>
+        <input type="text" autocomplete="off" id="global-language-a" placeholder="Language for Word" value="Word" oninput="updateGlobalSettings()">
+        <input type="text" autocomplete="off" id="global-language-b" placeholder="Language for Translation" value="Translation" oninput="updateGlobalSettings()">
+    </div>
 
     <div id="add-section" class="hidden">
         <h3>Add a Word</h3>
-        <input type="text" autocomplete="off" id="word" placeholder="Word">
-        <input type="text" autocomplete="off" id="translation" placeholder="Translation">
+        <textarea rows="5" autocomplete="off" id="word" placeholder="Word"></textarea>
+        <textarea rows="5" autocomplete="off" id="translation" placeholder="Translation"></textarea>
+        <label><input type="checkbox" id="bidirectional" onchange="updateBidirectionalSetting()">Practice both directions</label>
         <button onclick="addWord()">Add</button>
     </div>
 
@@ -64,13 +74,18 @@
         <table>
             <thead>
                 <tr>
-                    <th>Word</th>
-                    <th>Translation</th>
+                    <th id="header-language-a">Word</th>
+                    <th id="header-language-b">Translation</th>
+                    <th></th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody id="word-table-body"></tbody>
         </table>
+    </div>
+
+    <div id="export-import" class="hidden">
+        <h3>File</h3>
         <button onclick="exportData()">Export</button>
         <input type="file" id="import-file" onchange="importData(event)">
     </div>
@@ -101,220 +116,289 @@
     </div>
 
     <script>
-        let words = JSON.parse(localStorage.getItem('words')) || [];
-        let currentWord = null;
-        let incorrectCount = 0;
+        (function () {
+            "use strict";
 
-        function setMode(mode) {
-            document.getElementById('add-section').classList.toggle('hidden', mode !== 'edit');
-            document.getElementById('word-list').classList.toggle('hidden', mode !== 'edit');
-            document.getElementById('quiz-section').classList.toggle('hidden', mode !== 'practice');
-            document.getElementById('feedback-section').classList.toggle('hidden', mode !== 'feedback');
+            const LS_WORDS = "words";
+            const LS_LANG_A = "globalLanguageA";
+            const LS_LANG_B = "globalLanguageB";
+            const LS_EXERCISE = "globalExerciseName";
+            const LS_BIDIRECTIONAL = "bidirectionalSetting";
 
-            const correctCols = document.querySelectorAll('.correct-col');
-            const incorrectCols = document.querySelectorAll('.incorrect-col');
+            const globalExerciseNameEl = document.getElementById("global-exercise-name");
+            const globalLanguageAEl = document.getElementById("global-language-a");
+            const globalLanguageBEl = document.getElementById("global-language-b");
+            const wordEl = document.getElementById("word");
+            const translationEl = document.getElementById("translation");
+            const bidirectionalEl = document.getElementById("bidirectional");
+            const headerLanguageAEl = document.getElementById("header-language-a");
+            const headerLanguageBEl = document.getElementById("header-language-b");
+            const questionEl = document.getElementById("question");
+            const answerEl = document.getElementById("answer");
+            const feedbackMessageEl = document.getElementById("feedback-message");
 
-            correctCols.forEach(col => col.style.display = mode === 'edit' ? 'none' : 'table-cell');
-            incorrectCols.forEach(col => col.style.display = mode === 'edit' ? 'none' : 'table-cell');
+            let words = JSON.parse(localStorage.getItem(LS_WORDS)) || [];
+            let currentWord = null;
+            let incorrectCount = 0;
+            let currentDirectionSwapped = false;
 
-            if (mode === 'practice') {
-                nextWord();
-            }
-            if (mode === 'feedback') {
-                updateFeedback();
-            }
-            if (mode === 'edit') {
-                updateWordList();
-            }
-        }
+            window.setMode = function (mode) {
+                document.getElementById('global-settings').classList.toggle('hidden', mode !== 'edit');
+                document.getElementById('add-section').classList.toggle('hidden', mode !== 'edit');
+                document.getElementById('word-list').classList.toggle('hidden', mode !== 'edit');
+                document.getElementById('export-import').classList.toggle('hidden', mode !== 'edit');
+                document.getElementById('quiz-section').classList.toggle('hidden', mode !== 'practice');
+                document.getElementById('feedback-section').classList.toggle('hidden', mode !== 'feedback');
 
-        function updateFeedback() {
-            const tableBody = document.getElementById('feedback-table-body');
-            tableBody.innerHTML = '';
-
-            if (words.length === 0) {
-                tableBody.innerHTML = '<tr><td colspan="4">No words available</td></tr>';
-                return;
-            }
-
-            words.forEach(entry => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td>${entry.word}</td>
-                    <td>${entry.translation}</td>
-                    <td>${entry.correct ?? 0}</td>
-                    <td>${entry.incorrect ?? 0}</td>
-                `;
-                tableBody.appendChild(row);
-            });
-        }
-
-
-        function nextWord() {
-            if (words.length === 0) return;
-
-            // Increase the weight of words with more incorrect attempts
-            let weightedWords = [];
-            words.forEach(word => {
-                const weight = Math.max(1, word.incorrect - word.correct + 1); // Prioritize wrong words
-                for (let i = 0; i < weight; i++) {
-                    weightedWords.push(word);
-                }
-            });
-
-            // 80% chance to pick from weighted words, 20% chance to mix in a random word
-            let useWeighted = Math.random() < 0.8;
-            if (useWeighted) {
-                currentWord = weightedWords[Math.floor(Math.random() * weightedWords.length)];
-            } else {
-                currentWord = words[Math.floor(Math.random() * words.length)];
-            }
-
-            incorrectCount = 0;
-            document.getElementById('question').innerText = currentWord.word;
-            document.getElementById('answer').value = '';
-            document.getElementById('answer').focus();
-
-            document.getElementById('feedback-message').textContent = '';
-
-        }
-
-        function checkAnswer() {
-            const answerInput = document.getElementById('answer');
-            const feedbackMessage = document.getElementById('feedback-message');
-
-            if (!currentWord) {
-                feedbackMessage.textContent = "No words available!";
-                feedbackMessage.style.color = "red";
-                return;
-            }
-
-            const answer = answerInput.value.trim(); // Keep original case
-            const correctAnswer = currentWord.translation.trim(); // Keep original case
-
-            if (answer === correctAnswer) { // Direct comparison without lowercase conversion
-                currentWord.correct++;
-                feedbackMessage.textContent = "✅ Correct! 🎉";
-                feedbackMessage.style.color = "green";
-
-                setTimeout(() => {
+                if (mode === 'practice') {
                     nextWord();
-                }, 1000);
-            } else {
-                incorrectCount++;
+                }
+                if (mode === 'feedback') {
+                    updateFeedback();
+                }
+                if (mode === 'edit') {
+                    updateWordList();
+                }
+            };
 
-                if (incorrectCount >= 3) {
-                    feedbackMessage.textContent = `❌ Correct answer: ${currentWord.translation}`;
-                    feedbackMessage.style.color = "red";
-                    currentWord.incorrect++;
+            window.updateGlobalSettings = function () {
+                const langA = globalLanguageAEl.value.trim() || "Word";
+                const langB = globalLanguageBEl.value.trim() || "Translation";
+                const exerciseName = globalExerciseNameEl.value.trim() || "Translation";
+                localStorage.setItem(LS_LANG_A, langA);
+                localStorage.setItem(LS_LANG_B, langB);
+                localStorage.setItem(LS_EXERCISE, exerciseName);
+                headerLanguageAEl.innerText = langA;
+                headerLanguageBEl.innerText = langB;
+                wordEl.placeholder = langA;
+                translationEl.placeholder = langB;
+            };
 
-                    setTimeout(() => {
-                        nextWord();
-                    }, 2000);
-                } else {
-                    feedbackMessage.textContent = `❌ Incorrect. Try again! (${incorrectCount}/3)`;
-                    feedbackMessage.style.color = "red";
+            function loadGlobalSettings() {
+                const langA = localStorage.getItem(LS_LANG_A);
+                const langB = localStorage.getItem(LS_LANG_B);
+                const exerciseName = localStorage.getItem(LS_EXERCISE);
+                if (langA) {
+                    globalLanguageAEl.value = langA;
+                    headerLanguageAEl.innerText = langA;
+                    wordEl.placeholder = langA;
+                }
+                if (langB) {
+                    globalLanguageBEl.value = langB;
+                    headerLanguageBEl.innerText = langB;
+                    translationEl.placeholder = langB;
+                }
+                if (exerciseName) {
+                    globalExerciseNameEl.value = exerciseName;
                 }
             }
 
-            answerInput.value = ''; // Clear input field
-            answerInput.focus(); // Keep focus on input field
-            localStorage.setItem('words', JSON.stringify(words)); // Save progress
-        }
+            window.updateBidirectionalSetting = function () {
+                const bidirectional = bidirectionalEl.checked;
+                localStorage.setItem(LS_BIDIRECTIONAL, bidirectional);
+            };
 
-        function addWord() {
-            const wordInput = document.getElementById('word');
-            const translationInput = document.getElementById('translation');
-            const word = wordInput.value.trim();
-            const translation = translationInput.value.trim();
-
-            if (!word || !translation) {
-                alert("Please enter both a word and a translation.");
-                return;
+            function loadBidirectionalSetting() {
+                const stored = localStorage.getItem(LS_BIDIRECTIONAL);
+                if (stored !== null) {
+                    bidirectionalEl.checked = (stored === "true");
+                }
             }
 
-            words.push({ word, translation, correct: 0, incorrect: 0 });
-            localStorage.setItem('words', JSON.stringify(words));
-
-            // Clear the input fields after submission
-            wordInput.value = '';
-            translationInput.value = '';
-            wordInput.focus();
-
-            updateWordList();
-        }
-
-        document.getElementById('translation').addEventListener('keydown', function (event) {
-            if (event.key === "Enter") {
-                event.preventDefault(); // Prevent accidental form submission (if inside a form)
-                addWord();
+            function nextWord() {
+                if (words.length === 0) return;
+                let weightedWords = [];
+                words.forEach(word => {
+                    const weight = Math.max(1, word.incorrect - word.correct + 1);
+                    for (let i = 0; i < weight; i++) { weightedWords.push(word); }
+                });
+                const useWeighted = Math.random() < 0.8;
+                currentWord = useWeighted ? weightedWords[Math.floor(Math.random() * weightedWords.length)]
+                    : words[Math.floor(Math.random() * words.length)];
+                if (currentWord.bidirectional) {
+                    currentDirectionSwapped = Math.random() < 0.5;
+                } else {
+                    currentDirectionSwapped = false;
+                }
+                incorrectCount = 0;
+                questionEl.innerText = currentDirectionSwapped ? currentWord.translation : currentWord.word;
+                answerEl.placeholder = currentDirectionSwapped ? globalLanguageAEl.value : globalLanguageBEl.value;
+                answerEl.value = "";
+                answerEl.focus();
+                feedbackMessageEl.textContent = "";
             }
-        });
 
-        document.getElementById('answer').addEventListener('keydown', function (event) {
-            if (event.key === "Enter") {
-                event.preventDefault(); // Prevent accidental form submission
-                checkAnswer();
-            }
-        });
+            window.checkAnswer = function () {
+                if (!currentWord) {
+                    feedbackMessageEl.textContent = "No words available!";
+                    feedbackMessageEl.style.color = "red";
+                    return;
+                }
+                let correctAnswer;
+                if (currentWord.bidirectional) {
+                    correctAnswer = currentDirectionSwapped ? currentWord.word : currentWord.translation;
+                } else {
+                    correctAnswer = currentWord.translation;
+                }
+                const answer = answerEl.value.trim();
+                if (answer === correctAnswer) {
+                    if (currentWord.bidirectional) {
+                        if (currentDirectionSwapped) {
+                            currentWord.correctSwapped = (currentWord.correctSwapped || 0) + 1;
+                        } else {
+                            currentWord.correctOriginal = (currentWord.correctOriginal || 0) + 1;
+                        }
+                    } else {
+                        currentWord.correct = (currentWord.correct || 0) + 1;
+                    }
+                    feedbackMessageEl.textContent = "✅ Correct! 🎉";
+                    feedbackMessageEl.style.color = "green";
+                    setTimeout(nextWord, 1000);
+                } else {
+                    incorrectCount++;
+                    if (incorrectCount >= 3) {
+                        feedbackMessageEl.textContent = `❌ Correct answer: ${correctAnswer}`;
+                        feedbackMessageEl.style.color = "red";
+                        if (currentWord.bidirectional) {
+                            if (currentDirectionSwapped) {
+                                currentWord.incorrectSwapped = (currentWord.incorrectSwapped || 0) + 1;
+                            } else {
+                                currentWord.incorrectOriginal = (currentWord.incorrectOriginal || 0) + 1;
+                            }
+                        } else {
+                            currentWord.incorrect = (currentWord.incorrect || 0) + 1;
+                        }
+                        setTimeout(nextWord, 2000);
+                    } else {
+                        feedbackMessageEl.textContent = `❌ Incorrect. Try again! (${incorrectCount}/3)`;
+                        feedbackMessageEl.style.color = "red";
+                    }
+                }
+                answerEl.value = "";
+                answerEl.focus();
+                localStorage.setItem(LS_WORDS, JSON.stringify(words));
+            };
 
-        function updateWordList() {
-            const tableBody = document.getElementById('word-table-body');
-            tableBody.innerHTML = '';
-            words.forEach((entry, index) => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td><input type="text" autocomplete="off" value="${entry.word}" onchange="editWord(${index}, 'word', this.value)"></td>
-                    <td><input type="text" autocomplete="off" value="${entry.translation}" onchange="editWord(${index}, 'translation', this.value)"></td>
-                    <td><button onclick="deleteWord(${index})">Delete</button></td>
-                `;
-                tableBody.appendChild(row);
-            });
-        }
-
-        function deleteWord(index) {
-            words.splice(index, 1);
-            localStorage.setItem('words', JSON.stringify(words));
-            updateWordList();
-        }
-
-        function exportData() {
-            const blob = new Blob([JSON.stringify(words)], { type: 'application/json' });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = 'translations.json';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-        }
-
-        function importData(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = function (e) {
-                words = JSON.parse(e.target.result);
-                localStorage.setItem('words', JSON.stringify(words));
+            window.addWord = function () {
+                const word = wordEl.value.trim();
+                const translation = translationEl.value.trim();
+                const bidirectional = bidirectionalEl.checked;
+                if (!word || !translation) {
+                    alert("Please enter both a word and a translation.");
+                    return;
+                }
+                if (bidirectional) {
+                    words.push({ word, translation, bidirectional, correctOriginal: 0, incorrectOriginal: 0, correctSwapped: 0, incorrectSwapped: 0 });
+                } else {
+                    words.push({ word, translation, bidirectional, correct: 0, incorrect: 0 });
+                }
+                localStorage.setItem(LS_WORDS, JSON.stringify(words));
+                wordEl.value = "";
+                translationEl.value = "";
+                bidirectionalEl.checked = false;
+                wordEl.focus();
                 updateWordList();
             };
-            reader.readAsText(file);
-        }
 
-        function resetScores() {
-            words.forEach(entry => {
-                entry.correct = 0;
-                entry.incorrect = 0;
+            function updateWordList() {
+                const tableBody = document.getElementById("word-table-body");
+                tableBody.innerHTML = "";
+                words.forEach((entry, index) => {
+                    const row = document.createElement("tr");
+                    row.innerHTML = `
+                        <td><textarea rows="5" autocomplete="off" onchange="editWord(${index}, 'word', this.value)">${entry.word}</textarea></td>
+                        <td><textarea rows="5" autocomplete="off" onchange="editWord(${index}, 'translation', this.value)">${entry.translation}</textarea></td>
+                        <td><input type="checkbox" ${entry.bidirectional ? 'checked' : ''} onchange="editWord(${index}, 'bidirectional', this.checked)"></td>
+                        <td><button onclick="deleteWord(${index})">Delete</button></td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+            }
+
+            window.editWord = function (index, field, value) {
+                words[index][field] = value;
+                localStorage.setItem(LS_WORDS, JSON.stringify(words));
+            };
+
+            window.deleteWord = function (index) {
+                words.splice(index, 1);
+                localStorage.setItem(LS_WORDS, JSON.stringify(words));
+                updateWordList();
+            };
+
+            window.exportData = function () {
+                const blob = new Blob([JSON.stringify(words)], { type: "application/json" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                const exerciseName = localStorage.getItem(LS_EXERCISE) || "translation";
+                a.download = `${exerciseName}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            };
+
+            window.importData = function (event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    words = JSON.parse(e.target.result);
+                    localStorage.setItem(LS_WORDS, JSON.stringify(words));
+                    updateWordList();
+                };
+                reader.readAsText(file);
+            };
+
+            function updateFeedback() {
+                const tableBody = document.getElementById("feedback-table-body");
+                tableBody.innerHTML = "";
+                if (words.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="4">No words available</td></tr>';
+                    return;
+                }
+                words.forEach(entry => {
+                    let correctDisplay, incorrectDisplay;
+                    if (entry.bidirectional) {
+                        correctDisplay = `${localStorage.getItem(LS_LANG_A)}: ${entry.correctOriginal ?? 0} <br> ${localStorage.getItem(LS_LANG_B)}: ${entry.correctSwapped ?? 0}`;
+                        incorrectDisplay = `${localStorage.getItem(LS_LANG_A)}: ${entry.incorrectOriginal ?? 0} <br> ${localStorage.getItem(LS_LANG_B)}: ${entry.incorrectSwapped ?? 0}`;
+                    } else {
+                        correctDisplay = entry.correct ?? 0;
+                        incorrectDisplay = entry.incorrect ?? 0;
+                    }
+                    const row = document.createElement("tr");
+                    row.innerHTML = `
+                        <td>${entry.word}</td>
+                        <td>${entry.translation}</td>
+                        <td>${correctDisplay}</td>
+                        <td>${incorrectDisplay}</td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+            }
+
+            window.resetScores = function () {
+                words.forEach(entry => {
+                    if (entry.bidirectional) {
+                        entry.correctOriginal = 0;
+                        entry.incorrectOriginal = 0;
+                        entry.correctSwapped = 0;
+                        entry.incorrectSwapped = 0;
+                    } else {
+                        entry.correct = 0;
+                        entry.incorrect = 0;
+                    }
+                });
+                localStorage.setItem(LS_WORDS, JSON.stringify(words));
+                updateFeedback();
+            };
+
+            updateWordList();
+            document.addEventListener("DOMContentLoaded", () => {
+                loadGlobalSettings();
+                loadBidirectionalSetting();
+                setMode('practice');
             });
-
-            localStorage.setItem('words', JSON.stringify(words));
-            updateFeedback(); // Refresh the feedback table
-        }
-
-        updateWordList();
-
-        document.addEventListener("DOMContentLoaded", () => {
-            setMode('practice');
-        });
+        })();
     </script>
 </body>
 
