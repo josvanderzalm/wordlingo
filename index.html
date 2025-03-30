@@ -18,7 +18,10 @@
             margin-top: 10px;
             width: 100%;
         }
-
+        input[type="checkbox"] {
+            display: inline-block;
+            width: auto;
+        }
         #quiz-section,
         #word-list,
         #add-section,
@@ -63,10 +66,14 @@
 
     <div id="add-section" class="hidden">
         <h3>Add a Word</h3>
-        <textarea rows="5" autocomplete="off" id="word" placeholder="Word"></textarea>
-        <textarea rows="5" autocomplete="off" id="translation" placeholder="Translation"></textarea>
-        <label><input type="checkbox" id="bidirectional" onchange="updateBidirectionalSetting()">Practice both directions</label>
-        <button onclick="addWord()">Add</button>
+        <p>
+            <textarea rows="5" autocomplete="off" id="word" placeholder="Word"></textarea>
+            <textarea rows="5" autocomplete="off" id="translation" placeholder="Translation"></textarea>
+        </p>
+        <p>
+            <label><input type="checkbox" id="bidirectional" onchange="updateBidirectionalSetting()">Practice both directions</label>
+            <button onclick="addWord()">Add</button>
+        </p>
     </div>
 
     <div id="word-list" class="hidden">
@@ -209,12 +216,24 @@
                 if (words.length === 0) return;
                 let weightedWords = [];
                 words.forEach(word => {
-                    const weight = Math.max(1, word.incorrect - word.correct + 1);
-                    for (let i = 0; i < weight; i++) { weightedWords.push(word); }
+                    let weight = 1;
+                    if (word.bidirectional) {
+                        const totalOrig = (word.correctOriginal || 0) + (word.incorrectOriginal || 0);
+                        const totalSwapped = (word.correctSwapped || 0) + (word.incorrectSwapped || 0);
+                        const weightOrig = totalOrig === 0 ? 3 : Math.max(1, (word.incorrectOriginal || 0) - (word.correctOriginal || 0) + 1);
+                        const weightSwapped = totalSwapped === 0 ? 3 : Math.max(1, (word.incorrectSwapped || 0) - (word.correctSwapped || 0) + 1);
+                        weight = Math.max(weightOrig, weightSwapped);
+                    } else {
+                        const total = (word.correct || 0) + (word.incorrect || 0);
+                        weight = total === 0 ? 3 : Math.max(1, (word.incorrect || 0) - (word.correct || 0) + 1);
+                    }
+                    for (let i = 0; i < weight; i++) {
+                        weightedWords.push(word);
+                    }
                 });
                 const useWeighted = Math.random() < 0.8;
                 currentWord = useWeighted ? weightedWords[Math.floor(Math.random() * weightedWords.length)]
-                    : words[Math.floor(Math.random() * words.length)];
+                                          : words[Math.floor(Math.random() * words.length)];
                 if (currentWord.bidirectional) {
                     currentDirectionSwapped = Math.random() < 0.5;
                 } else {
@@ -397,6 +416,14 @@
                 loadGlobalSettings();
                 loadBidirectionalSetting();
                 setMode('practice');
+            });
+
+            // Add event listener for Enter key on quiz answer input to trigger checkAnswer
+            answerEl.addEventListener('keydown', function (event) {
+                if (event.key === "Enter") {
+                    event.preventDefault();
+                    checkAnswer();
+                }
             });
         })();
     </script>
